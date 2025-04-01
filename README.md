@@ -1,50 +1,110 @@
-# Welcome to your Expo app 👋
+# Taskify - Task Management Application
 
-This is an [Expo](https://expo.dev) project created with [`create-expo-app`](https://www.npmjs.com/package/create-expo-app).
+Taskify is a full-featured task management application built with React Native, Expo, and Firebase. It allows users to manage their daily tasks with features like authentication, task creation, editing, and completion tracking.
 
-## Get started
+## Features
 
-1. Install dependencies
+- 🔒 User authentication (login/register)
+- ✅ Create, edit, and delete tasks
+- 📆 Set due dates for tasks
+- 📅 Calendar view to see scheduled tasks
+- 📝 Create, edit, and delete notes with a notebook-like interface
+- ✓ Mark tasks as completed
+- 🌓 Light/dark theme support
+- 📱 Cross-platform (iOS, Android, Web)
 
-   ```bash
-   npm install
-   ```
+## Prerequisites
 
-2. Start the app
+- Node.js (16.x or higher)
+- npm or yarn
+- Expo CLI
+- Firebase account
 
-   ```bash
-    npx expo start
-   ```
+## Installation
 
-In the output, you'll find options to open the app in a
-
-- [development build](https://docs.expo.dev/develop/development-builds/introduction/)
-- [Android emulator](https://docs.expo.dev/workflow/android-studio-emulator/)
-- [iOS simulator](https://docs.expo.dev/workflow/ios-simulator/)
-- [Expo Go](https://expo.dev/go), a limited sandbox for trying out app development with Expo
-
-You can start developing by editing the files inside the **app** directory. This project uses [file-based routing](https://docs.expo.dev/router/introduction).
-
-## Get a fresh project
-
-When you're ready, run:
-
-```bash
-npm run reset-project
+1. Clone the repository:
+```
+git clone https://github.com/yourusername/taskify.git
+cd taskify
 ```
 
-This command will move the starter code to the **app-example** directory and create a blank **app** directory where you can start developing.
+2. Install dependencies:
+```
+npm install
+```
 
-## Learn more
+3. Configure Firebase:
+   - Create a Firebase project at [Firebase Console](https://console.firebase.google.com/)
+   - Enable Authentication with Email/Password method
+   - Create a Firestore database
+   - Get your Firebase configuration (apiKey, authDomain, etc.)
+   - Replace the placeholder values in `app/utils/firebase.js` with your actual Firebase config
 
-To learn more about developing your project with Expo, look at the following resources:
+4. Start the development server:
+```
+npm start
+```
 
-- [Expo documentation](https://docs.expo.dev/): Learn fundamentals, or go into advanced topics with our [guides](https://docs.expo.dev/guides).
-- [Learn Expo tutorial](https://docs.expo.dev/tutorial/introduction/): Follow a step-by-step tutorial where you'll create a project that runs on Android, iOS, and the web.
+5. Run on your device:
+   - For iOS (requires macOS): `npm run ios`
+   - For Android: `npm run android`
+   - For web: `npm run web`
+   - Or scan the QR code with Expo Go app
 
-## Join the community
+## Building for Production
 
-Join our community of developers creating universal apps.
+### For Android (APK)
 
-- [Expo on GitHub](https://github.com/expo/expo): View our open source platform and contribute.
-- [Discord community](https://chat.expo.dev): Chat with Expo users and ask questions.
+```
+expo build:android
+```
+
+### For iOS (requires Apple Developer account)
+
+```
+expo build:ios
+```
+
+### For Web
+
+```
+expo build:web
+```
+
+## Project Structure
+
+- `app/` - Expo Router screens and navigation
+  - `(auth)/` - Authentication screens (login, register)
+  - `(tabs)/` - Main app tabs (tasks, calendar, notes, profile)
+  - `utils/` - Firebase and utility functions
+- `components/` - Reusable components
+- `assets/` - Images, fonts, and other static assets
+
+## New Features (v1.1)
+
+### Due Dates
+- Set due dates when creating or editing tasks
+- Tasks are color-coded based on due dates (today, tomorrow, past due)
+- Tasks are sorted by due date for better prioritization
+
+### Calendar View
+- Interactive calendar to visualize your scheduled tasks
+- Dates with tasks are marked with dots
+- Select any date to see tasks scheduled for that day
+
+### Notes
+- Create and manage personal notes
+- Notes feature a notebook paper design for a fun experience
+- Full CRUD functionality (create, read, update, delete)
+
+## License
+
+This project is licensed under the MIT License.
+
+## Acknowledgements
+
+- [Expo](https://expo.dev)
+- [React Native](https://reactnative.dev)
+- [Firebase](https://firebase.google.com)
+- [React Native Paper](https://reactnativepaper.com)
+- [React Native Calendars](https://github.com/wix/react-native-calendars)
