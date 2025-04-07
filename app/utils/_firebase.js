@@ -1,11 +1,12 @@
-import { initializeApp } from 'firebase/app';
+import { initializeApp, getApps, getApp } from 'firebase/app';
 import { 
   getAuth, 
   signInWithEmailAndPassword, 
   createUserWithEmailAndPassword,
   signOut,
   initializeAuth,
-  getReactNativePersistence
+  getReactNativePersistence,
+  signInAnonymously
 } from 'firebase/auth';
 import { 
   getFirestore, 
@@ -29,14 +30,25 @@ const firebaseConfig = {
   apiKey: "AIzaSyCSjpCulmajAKN5ZFP8NVcwbmDDdLjko7U",
   authDomain: "taskplus-4ea2f.firebaseapp.com",
   projectId: "taskplus-4ea2f",
-  storageBucket: "taskplus-4ea2f.firebasestorage.app",
+  storageBucket: "taskplus-4ea2f.appspot.com",
   messagingSenderId: "151563198797",
   appId: "1:151563198797:web:e1e11c2549b8885a4a5704",
   measurementId: "G-8BS9P8M0RK"
 };
 
-// Initialize Firebase
-const app = initializeApp(firebaseConfig);
+// Initialize Firebase - check if app already exists to prevent duplicate initialization
+let app;
+try {
+  if (getApps().length === 0) {
+    app = initializeApp(firebaseConfig);
+    console.log('Firebase app initialized for the first time');
+  } else {
+    app = getApp();
+    console.log('Using existing Firebase app instance');
+  }
+} catch (error) {
+  console.error('Error initializing Firebase app:', error);
+}
 
 // Initialize Auth with persistence
 const auth = Platform.OS === 'web' 
@@ -45,7 +57,38 @@ const auth = Platform.OS === 'web'
       persistence: getReactNativePersistence(AsyncStorage)
     });
 
-const db = getFirestore(app);
+// Initialize Firestore
+let db;
+try {
+  db = getFirestore(app);
+  console.log('Firestore initialized successfully');
+} catch (error) {
+  console.error('Error initializing Firestore:', error);
+  // Fallback to a mock database if needed
+  db = {
+    _isMock: true,
+    collection: () => ({
+      // Mock methods for collection
+    }),
+    doc: () => ({
+      // Mock methods for doc
+    })
+  };
+}
+
+// Helper function to safely execute Firestore operations
+const safeFirestoreOperation = async (operation) => {
+  try {
+    if (db._isMock) {
+      console.warn('Using mock database - operation may not work as expected');
+      return null;
+    }
+    return await operation();
+  } catch (error) {
+    console.error('Firestore operation failed:', error);
+    throw error;
+  }
+};
 
 // Authentication functions
 const loginUser = async (email, password) => {
@@ -54,7 +97,38 @@ const loginUser = async (email, password) => {
     return userCredential.user;
   } catch (error) {
     console.error('Firebase login error:', error.code, error.message);
-    throw error; // Rethrow the error for handling in the login component
+    throw error;
+  }
+};
+
+const loginAsGuest = async () => {
+  try {
+    // First try anonymous sign-in
+    const userCredential = await signInAnonymously(auth);
+    console.log('Anonymous login successful');
+    return userCredential.user;
+  } catch (error) {
+    // If anonymous auth fails due to admin restriction, create a temporary user session instead
+    if (error.code === 'auth/admin-restricted-operation') {
+      console.log('Anonymous auth is disabled, using local guest session');
+      // Generate a random guest ID
+      const guestId = 'guest_' + Math.random().toString(36).substring(2, 15);
+      
+      // Return a mock user object that your app can use
+      return {
+        uid: guestId,
+        isAnonymous: true,
+        displayName: 'Guest User',
+        email: null,
+        // Add any other user properties your app expects
+        _isOfflineGuest: true, // Custom flag to identify offline guest users
+      };
+    }
+    
+    // Only log errors that aren't handled
+    console.error('Firebase guest login error:', error.code, error.message);
+    // Rethrow other errors
+    throw error;
   }
 };
 
@@ -121,6 +195,22 @@ const processDateField = (data) => {
 // Firestore functions for tasks
 const addTask = async (userId, task) => {
   try {
+    // Check if this is an offline guest user
+    if (userId && userId.startsWith('guest_') || (auth.currentUser && auth.currentUser._isOfflineGuest)) {
+      console.log('Adding local task for guest user');
+      // Generate a mock ID for the task
+      const mockId = 'local_' + Math.random().toString(36).substring(2, 15);
+      // Create the task with the mock ID and timestamps
+      return {
+        ...task,
+        id: mockId,
+        userId,
+        createdAt: new Date(),
+        // Ensure proper date object for dueDate
+        dueDate: task.dueDate instanceof Date ? task.dueDate : (task.dueDate ? new Date(task.dueDate) : null)
+      };
+    }
+    
     // Make sure we're storing dates as Firestore timestamps
     let taskToAdd = { ...task, userId };
     
@@ -158,6 +248,25 @@ const addTask = async (userId, task) => {
 
 const getTasks = async (userId) => {
   try {
+    // Check if this is an offline guest user
+    if (userId && userId.startsWith('guest_') || (auth.currentUser && auth.currentUser._isOfflineGuest)) {
+      console.log('Using local task data for guest user');
+      // Return mock tasks for guest users
+      return [
+        {
+          id: 'sample-task-1',
+          title: 'Welcome to Taskify!',
+          description: 'This is a sample task for guest users.',
+          completed: false,
+          priority: 'medium',
+          category: 'default',
+          dueDate: new Date(Date.now() + 86400000), // Tomorrow
+          createdAt: new Date()
+        }
+      ];
+    }
+    
+    // For logged in users, fetch from Firestore
     const q = query(collection(db, 'tasks'), where('userId', '==', userId));
     const querySnapshot = await getDocs(q);
     
@@ -278,29 +387,73 @@ const deleteTask = async (taskId) => {
 
 const addNote = async (userId, note) => {
   try {
-    const noteToAdd = {
-      ...note,
-      userId,
-      createdAt: Timestamp.now()
+    console.log('Adding note for user:', userId);
+    
+    // Check if this is an offline guest user
+    if ((userId && userId.startsWith('guest_')) || (auth.currentUser && auth.currentUser._isOfflineGuest)) {
+      console.log('Adding local note for guest user');
+      // Generate a mock ID for the note
+      const mockId = 'local_note_' + Math.random().toString(36).substring(2, 15);
+      // Create the note with the mock ID
+      const noteWithData = {
+        ...note,
+        id: mockId,
+        userId,
+        createdAt: new Date()
+      };
+      console.log('Created local note:', noteWithData);
+      return noteWithData;
+    }
+
+    // Prepare the photo data - ensure it's in the right format for Firestore
+    let processedNote = { ...note };
+    
+    // Simplify photo object for Firestore storage
+    if (note.photo && note.photo.uri) {
+      processedNote.photo = { 
+        uri: note.photo.uri,
+        // Add only essential photo metadata
+        type: note.photo.type || 'image/jpeg',
+        name: note.photo.fileName || 'photo.jpg'
+      };
+    }
+    
+    const noteWithUserId = { 
+      ...processedNote, 
+      userId, 
+      createdAt: Timestamp.now() 
     };
     
-    const docRef = await addDoc(collection(db, 'notes'), noteToAdd);
-    return {
-      ...noteToAdd,
-      createdAt: new Date(), // Convert back to JS Date for client use
-      id: docRef.id // Ensure document ID comes last to override any 'id' in the data
-    };
+    console.log('Attempting to add note to Firestore');
+    const docRef = await addDoc(collection(db, 'notes'), noteWithUserId);
+    console.log('Note added successfully with ID:', docRef.id);
+    
+    return { ...noteWithUserId, id: docRef.id };
   } catch (error) {
-    console.error('Error adding note:', error);
+    console.error('Error adding note:', error.message);
+    console.error('Error stack:', error.stack);
     throw error;
   }
 };
 
 const getNotes = async (userId) => {
   try {
+    // Check if this is an offline guest user
+    if (userId && userId.startsWith('guest_') || (auth.currentUser && auth.currentUser._isOfflineGuest)) {
+      console.log('Using local notes for guest user');
+      // Return mock notes for guest users
+      return [
+        {
+          id: 'sample-note-1',
+          title: 'Welcome to Notes!',
+          content: 'This is a sample note for guest users.',
+          createdAt: new Date()
+        }
+      ];
+    }
+    
     const q = query(collection(db, 'notes'), where('userId', '==', userId));
     const querySnapshot = await getDocs(q);
-    
     const notes = [];
     querySnapshot.forEach((doc) => {
       const data = doc.data();
@@ -414,6 +567,7 @@ export {
   auth,
   db,
   loginUser,
+  loginAsGuest,
   registerUser,
   logoutUser,
   addTask,

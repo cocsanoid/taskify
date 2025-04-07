@@ -1,34 +1,114 @@
-import React, { useState, useEffect, useCallback } from 'react';
-import { View, StyleSheet, FlatList, Platform, ScrollView, Dimensions, TouchableOpacity } from 'react-native';
-import { Appbar, Text, List, Divider, ActivityIndicator, FAB, useTheme, Chip } from 'react-native-paper';
-import { Calendar } from 'react-native-calendars';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
+import { View, StyleSheet, ScrollView, TouchableOpacity, Platform, Dimensions, useColorScheme } from 'react-native';
+import { Calendar as RNCalendar } from 'react-native-calendars';
+import { Card, Text, useTheme, Divider, List, IconButton, ActivityIndicator, FAB } from 'react-native-paper';
+import { StatusBar } from 'expo-status-bar';
 import { router } from 'expo-router';
 import { auth, getTasks } from '../utils/_firebase';
-import { useFocusEffect } from '@react-navigation/native';
+import { format, isToday, isTomorrow, parseISO } from 'date-fns';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { useColorScheme } from 'react-native';
+import { ru, enUS } from 'date-fns/locale';
+import { useTranslation } from 'react-i18next';
+import TabBackground from '../components/TabBackground';
+import TabAppBar from '../components/TabAppBar';
+import PageBackground from '../../components/PageBackground';
+import { useTheme as useCustomTheme } from '../context/ThemeContext';
+import ThemeAwareView from '../components/ThemeAwareView';
+
+// Inject calendar day style to ensure day numbers are visible in both modes
+if (Platform.OS === 'web' && typeof document !== 'undefined') {
+  const style = document.createElement('style');
+  style.textContent = `
+    /* Dark mode styles */
+    .dark-theme .calendar-container {
+      background-color: #151515;
+    }
+    .dark-theme .calendar-container .day-container span {
+      color: white !important;
+      font-weight: 600 !important;
+    }
+    .dark-theme .calendar-container div[role="gridcell"] {
+      color: white !important;
+    }
+    .dark-theme .calendar-container .day-text {
+      color: white !important;
+    }
+    
+    /* Target RN Calendar day text specifically for dark mode */
+    .dark-theme .react-native-calendars .day-container span,
+    .dark-theme .react-native-calendars .day span,
+    .dark-theme .react-native-calendars span.day {
+      color: white !important;
+    }
+    
+    /* Specific implementation details of react-native-calendars in dark mode */
+    .dark-theme .calendar .day-text {
+      color: white !important;
+    }
+    .dark-theme .calendar .day {
+      color: white !important;
+    }
+
+    /* Light mode styles */
+    .light-theme .calendar-container {
+      background-color: white;
+    }
+    .light-theme .calendar-container .day-container span {
+      color: #333 !important;
+      font-weight: 600 !important;
+    }
+    .light-theme .calendar-container div[role="gridcell"] {
+      color: #333 !important;
+    }
+    .light-theme .calendar-container .day-text {
+      color: #333 !important;
+    }
+    
+    /* Target RN Calendar day text specifically for light mode */
+    .light-theme .react-native-calendars .day-container span,
+    .light-theme .react-native-calendars .day span,
+    .light-theme .react-native-calendars span.day {
+      color: #333 !important;
+    }
+    
+    /* Specific implementation details of react-native-calendars in light mode */
+    .light-theme .calendar .day-text {
+      color: #333 !important;
+    }
+    .light-theme .calendar .day {
+      color: #333 !important;
+    }
+  `;
+  document.head.append(style);
+}
 
 export default function CalendarScreen() {
-  // Initialize with UTC date at noon
-  const today = new Date();
-  const initialDate = new Date(Date.UTC(
-    today.getFullYear(),
-    today.getMonth(),
-    today.getDate(),
-    12, 0, 0, 0
-  ));
-  
-  const [selectedDate, setSelectedDate] = useState(initialDate.toISOString().split('T')[0]);
-  const [markedDates, setMarkedDates] = useState({});
+  const { t, i18n } = useTranslation();
+  const theme = useTheme();
+  const { isDarkMode } = useCustomTheme();
+  const systemColorScheme = useColorScheme();
+  const [selected, setSelected] = useState('');
   const [tasks, setTasks] = useState([]);
-  const [filteredTasks, setFilteredTasks] = useState([]);
   const [loading, setLoading] = useState(true);
-  const theme = useTheme(); // Get theme from React-Native-Paper
-  const [themeVersion, setThemeVersion] = useState(0); // Track theme version for forcing re-renders
+  const [markedDates, setMarkedDates] = useState({});
+  const [selectedDateTasks, setSelectedDateTasks] = useState([]);
+  const [lastUpdated, setLastUpdated] = useState('0');
+  const [menuVisible, setMenuVisible] = useState(false);
+  const [themeTimestamp, setThemeTimestamp] = useState('0');
   
-  // Add responsive state
+  // Get current locale for date formatting
+  const currentLocale = i18n.language === 'ru' ? ru : enUS;
+
+  // Create fallback colors in case theme.colors.calendarTab is undefined
+  const calendarTabColors = useMemo(() => theme.colors.calendarTab || {
+    primary: theme.colors.primary,
+    secondary: theme.colors.secondary
+  }, [theme.colors]);
+
+  // Breakpoints for responsive layouts
   const [dimensions, setDimensions] = useState(Dimensions.get('window'));
   const isDesktop = Platform.OS === 'web' && dimensions.width >= 1024;
+  const isMobile = Platform.OS === 'ios' || Platform.OS === 'android' || dimensions.width < 768;
   
   // Listen for dimension changes
   useEffect(() => {
@@ -41,470 +121,645 @@ export default function CalendarScreen() {
       subscription.remove();
     };
   }, []);
-
-  // Monitor theme changes directly from AsyncStorage
-  useFocusEffect(
-    useCallback(() => {
-      // Increment theme version to force a re-render when screen comes into focus
-      setThemeVersion(v => v + 1);
+  
+  // Apply calendar styles for dark mode
+  useEffect(() => {
+    if (Platform.OS === 'web' && typeof document !== 'undefined') {
+      // Add theme class to document body
+      document.body.classList.remove('dark-theme', 'light-theme');
+      document.body.classList.add(isDarkMode ? 'dark-theme' : 'light-theme');
       
-      let lastTheme = null;
-      const checkThemeChanges = async () => {
+      // Wait for DOM to be ready
+      setTimeout(() => {
         try {
-          // Check for actual theme changes
-          const savedDarkMode = await AsyncStorage.getItem('darkMode');
-          if (savedDarkMode !== null && savedDarkMode !== lastTheme) {
-            lastTheme = savedDarkMode;
-            setThemeVersion(v => v + 1);
-          }
+          // Apply appropriate theme class to calendar container
+          const calendarContainers = document.querySelectorAll('.calendar-container');
+          calendarContainers.forEach(container => {
+            container.classList.remove('dark-theme', 'light-theme');
+            container.classList.add(isDarkMode ? 'dark-theme' : 'light-theme');
+          });
+          
+          // Target calendar days with appropriate theme
+          const themeClass = isDarkMode ? '.dark-theme' : '.light-theme';
+          const calendarDays = document.querySelectorAll(`${themeClass} .calendar .day span, ${themeClass} .calendar span.day`);
+          calendarDays.forEach(day => {
+            day.style.color = isDarkMode ? 'white' : '#333';
+            day.style.fontWeight = '500';
+          });
+          
+          // Target day text with appropriate theme
+          const dayTexts = document.querySelectorAll(`${themeClass} .calendar .day-text`);
+          dayTexts.forEach(text => {
+            text.style.color = isDarkMode ? 'white' : '#333';
+          });
+          
+          console.log(`Applied ${isDarkMode ? 'dark' : 'light'} mode styles to calendar days`);
         } catch (error) {
-          console.error('Failed to check theme:', error);
+          console.error('Error applying calendar styles:', error);
         }
-      };
-      
-      // Check immediately
-      checkThemeChanges();
-      
-      // Use a more reasonable interval to reduce constant re-renders
-      const interval = setInterval(checkThemeChanges, 1000);
-      return () => clearInterval(interval);
-    }, [])
-  );
-
-  // Update when theme object changes, but throttle it
-  const prevThemeRef = React.useRef(null);
-  useEffect(() => {
-    // Only update if the theme dark mode value has actually changed
-    if (prevThemeRef.current !== theme.dark) {
-      prevThemeRef.current = theme.dark;
-      setThemeVersion(v => v + 1);
-      fetchTasks();
+      }, 500);
     }
-  }, [theme]);
-
-  // Use useFocusEffect to refresh tasks when the screen comes into focus
-  useFocusEffect(
-    useCallback(() => {
-      fetchTasks();
-    }, [])
-  );
-
+  }, [isDarkMode]);
+  
+  // Listen for theme changes from other components
   useEffect(() => {
-    // Filter tasks for the selected date
-    if (selectedDate && tasks.length > 0) {
-      const tasksForDate = tasks.filter(task => {
-        if (!task.dueDate) return false;
-        
-        // Convert firebase timestamp to UTC date string
-        const taskDate = task.dueDate instanceof Date ? task.dueDate : new Date(task.dueDate);
-        const taskUTCDate = new Date(Date.UTC(
-          taskDate.getFullYear(),
-          taskDate.getMonth(),
-          taskDate.getDate(),
-          12, 0, 0, 0
-        ));
-        const taskDateStr = taskUTCDate.toISOString().split('T')[0];
-        
-        return taskDateStr === selectedDate;
-      });
-      
-      setFilteredTasks(tasksForDate);
-    } else {
-      setFilteredTasks([]);
-    }
-  }, [selectedDate, tasks]);
-
+    const checkForThemeUpdates = async () => {
+      try {
+        const lastThemeUpdateTimestamp = await AsyncStorage.getItem('themeUpdateTimestamp');
+        if (lastThemeUpdateTimestamp && lastThemeUpdateTimestamp !== themeTimestamp) {
+          setThemeTimestamp(lastThemeUpdateTimestamp);
+          // Refresh the theme by re-applying styles
+          if (Platform.OS === 'web' && typeof document !== 'undefined') {
+            document.body.classList.remove('dark-theme', 'light-theme');
+            document.body.classList.add(isDarkMode ? 'dark-theme' : 'light-theme');
+            
+            // Apply to calendar containers
+            const calendarContainers = document.querySelectorAll('.calendar-container');
+            calendarContainers.forEach(container => {
+              container.classList.remove('dark-theme', 'light-theme');
+              container.classList.add(isDarkMode ? 'dark-theme' : 'light-theme');
+            });
+            
+            // Target calendar days with appropriate theme
+            const themeClass = isDarkMode ? '.dark-theme' : '.light-theme';
+            const calendarDays = document.querySelectorAll(`${themeClass} .calendar .day span, ${themeClass} .calendar span.day`);
+            calendarDays.forEach(day => {
+              day.style.color = isDarkMode ? 'white' : '#333';
+              day.style.fontWeight = '500';
+            });
+            
+            // Target day text with appropriate theme
+            const dayTexts = document.querySelectorAll(`${themeClass} .calendar .day-text`);
+            dayTexts.forEach(text => {
+              text.style.color = isDarkMode ? 'white' : '#333';
+            });
+            
+            console.log('Calendar theme updated from external change');
+          }
+        }
+      } catch (error) {
+        console.error('Error checking for theme updates:', error);
+      }
+    };
+    
+    // Check for theme updates every second
+    const intervalId = setInterval(checkForThemeUpdates, 1000);
+    return () => clearInterval(intervalId);
+  }, [isDarkMode, themeTimestamp]);
+  
+  // Fetch tasks on mount
+  useEffect(() => {
+    fetchTasks();
+    
+    // Set up polling to check for changes in tasks from other screens
+    const checkForUpdates = async () => {
+      try {
+        const lastUpdatedTimestamp = await AsyncStorage.getItem('tasksLastUpdated');
+        if (lastUpdatedTimestamp && lastUpdatedTimestamp !== lastUpdated) {
+          setLastUpdated(lastUpdatedTimestamp);
+          fetchTasks();
+        }
+      } catch (error) {
+        console.error('Error checking for task updates:', error);
+      }
+    };
+    
+    const intervalId = setInterval(checkForUpdates, 1000);
+    return () => clearInterval(intervalId);
+  }, [lastUpdated]);
+  
   const fetchTasks = async () => {
     try {
       setLoading(true);
       const userId = auth.currentUser?.uid;
-      if (!userId) return;
+      if (!userId) {
+        router.replace('/(auth)/login');
+        return;
+      }
       
       const fetchedTasks = await getTasks(userId);
       setTasks(fetchedTasks);
       
-      // Create marked dates object for calendar
-      const dates = {};
-      fetchedTasks.forEach(task => {
-        if (task.dueDate) {
-          const taskDate = task.dueDate instanceof Date ? task.dueDate : new Date(task.dueDate);
-          const taskUTCDate = new Date(Date.UTC(
-            taskDate.getFullYear(),
-            taskDate.getMonth(),
-            taskDate.getDate(),
-            12, 0, 0, 0
-          ));
-          const dateStr = taskUTCDate.toISOString().split('T')[0];
-          
-          dates[dateStr] = { 
-            marked: true, 
-            dotColor: theme.colors.primary,
-          };
-        }
-      });
+      // Process tasks to mark calendar dates
+      processTasks(fetchedTasks);
       
-      // Mark selected date
-      if (selectedDate) {
-        dates[selectedDate] = {
-          ...dates[selectedDate],
-          selected: true,
-          selectedColor: theme.colors.primary,
-        };
+      // If there's a selected date, update the tasks for that date
+      if (selected) {
+        filterTasksForSelectedDate(selected, fetchedTasks);
+      } else {
+        // Default to today if no date is selected
+        const today = format(new Date(), 'yyyy-MM-dd');
+        setSelected(today);
+        filterTasksForSelectedDate(today, fetchedTasks);
       }
-      
-      setMarkedDates(dates);
     } catch (error) {
       console.error('Error fetching tasks:', error);
     } finally {
       setLoading(false);
     }
   };
-
-  const handleDayPress = (day) => {
-    // Update selected date
-    const newSelectedDate = day.dateString;
-    setSelectedDate(newSelectedDate);
+  
+  const processTasks = (tasks) => {
+    const dates = {};
     
-    // Update marked dates to show selection
-    const updatedMarkedDates = { ...markedDates };
-    
-    // Remove selection from previously selected date
-    Object.keys(updatedMarkedDates).forEach(dateString => {
-      if (updatedMarkedDates[dateString].selected) {
-        updatedMarkedDates[dateString] = {
-          ...updatedMarkedDates[dateString],
-          selected: false,
-        };
+    tasks.forEach(task => {
+      if (task.dueDate) {
+        const dueDate = task.dueDate instanceof Date 
+          ? task.dueDate 
+          : new Date(task.dueDate);
+        
+        const dateStr = format(dueDate, 'yyyy-MM-dd');
+        
+        // If date already exists in our object, update the dots array
+        if (dates[dateStr]) {
+          dates[dateStr].dots.push({
+            key: task.id,
+            color: task.completed ? theme.colors.success : calendarTabColors.primary,
+          });
+        } else {
+          // Otherwise create a new entry
+          dates[dateStr] = {
+            dots: [{
+              key: task.id,
+              color: task.completed ? theme.colors.success : calendarTabColors.primary,
+            }],
+            selected: dateStr === selected,
+            selectedColor: calendarTabColors.primary
+          };
+        }
       }
     });
     
-    // Mark new selected date
-    updatedMarkedDates[newSelectedDate] = {
-      ...updatedMarkedDates[newSelectedDate],
-      selected: true,
-      selectedColor: theme.colors.primary,
-    };
+    // If there's a selected date, ensure it's marked as selected
+    if (selected) {
+      if (dates[selected]) {
+        dates[selected].selected = true;
+        dates[selected].selectedColor = calendarTabColors.primary;
+      } else {
+        dates[selected] = {
+          selected: true,
+          selectedColor: calendarTabColors.primary,
+          dots: []
+        };
+      }
+    }
+    
+    setMarkedDates(dates);
+  };
+  
+  const filterTasksForSelectedDate = (dateStr, tasksList = tasks) => {
+    const filtered = tasksList.filter(task => {
+      if (!task.dueDate) return false;
+      
+      const dueDate = task.dueDate instanceof Date 
+        ? task.dueDate 
+        : new Date(task.dueDate);
+      
+      const taskDateStr = format(dueDate, 'yyyy-MM-dd');
+      return taskDateStr === dateStr;
+    });
+    
+    // Sort tasks: incomplete first, then by creation date
+    filtered.sort((a, b) => {
+      if (a.completed !== b.completed) return a.completed ? 1 : -1;
+      
+      const aDate = a.createdAt instanceof Date ? a.createdAt : new Date(a.createdAt);
+      const bDate = b.createdAt instanceof Date ? b.createdAt : new Date(b.createdAt);
+      
+      return bDate - aDate;
+    });
+    
+    setSelectedDateTasks(filtered);
+  };
+  
+  const handleDateSelect = (day) => {
+    const dateStr = day.dateString;
+    setSelected(dateStr);
+    
+    // Update marked dates
+    const updatedMarkedDates = { ...markedDates };
+    
+    // Deselect the previously selected date
+    if (selected && updatedMarkedDates[selected]) {
+      updatedMarkedDates[selected] = {
+        ...updatedMarkedDates[selected],
+        selected: false
+      };
+    }
+    
+    // Select the new date
+    if (updatedMarkedDates[dateStr]) {
+      updatedMarkedDates[dateStr] = {
+        ...updatedMarkedDates[dateStr],
+        selected: true,
+        selectedColor: calendarTabColors.primary
+      };
+    } else {
+      updatedMarkedDates[dateStr] = {
+        selected: true,
+        selectedColor: calendarTabColors.primary,
+        dots: []
+      };
+    }
     
     setMarkedDates(updatedMarkedDates);
+    filterTasksForSelectedDate(dateStr);
+  };
+  
+  const handleOpenMenu = () => {
+    setMenuVisible(true);
+    console.log('Calendar menu opened');
   };
 
-  const renderTaskItem = ({ item }) => {
-    // Определение цвета категории
-    const getCategoryColor = (category) => {
-      if (!category || category === 'noCategory') return theme.colors.primary;
-      
-      switch(category) {
-        case 'work': return '#4285F4';
-        case 'personal': return '#EA4335';
-        case 'shopping': return '#FBBC05';
-        case 'health': return '#34A853';
-        case 'education': return '#9C27B0';
-        case 'finance': return '#00BCD4';
-        case 'other': return '#607D8B';
-        default: return theme.colors.primary;
-      }
-    };
+  const formatDateLabel = (dateStr) => {
+    const date = parseISO(dateStr);
     
-    // Получение названия категории
-    const getCategoryName = (category) => {
-      if (!category || category === 'noCategory') return '';
-      
-      const categories = {
-        work: 'Работа',
-        personal: 'Личное',
-        shopping: 'Покупки',
-        health: 'Здоровье',
-        education: 'Образование',
-        finance: 'Финансы',
-        other: 'Другое'
-      };
-      
-      return categories[category] || '';
-    };
+    if (isToday(date)) {
+      return t('calendar.today');
+    } else if (isTomorrow(date)) {
+      return t('calendar.tomorrow');
+    } else {
+      return format(date, 'EEEE, d MMMM', { locale: currentLocale });
+    }
+  };
+  
+  const renderSelectedDateTasks = () => {
+    if (loading) {
+      return (
+        <View style={styles.loadingContainer}>
+          <ActivityIndicator size="large" color={theme.colors.primary} />
+        </View>
+      );
+    }
     
-    const categoryName = getCategoryName(item.category);
+    if (selectedDateTasks.length === 0) {
+      return (
+        <Card style={[styles.tasksCard, { backgroundColor: theme.colors.surface }]} elevation={2}>
+          <Card.Content style={styles.emptyContent}>
+            <Text style={[styles.emptyText, { color: theme.colors.onSurfaceDisabled }]}>
+              {t('calendar.noTasksForDate')}
+            </Text>
+            <TouchableOpacity
+              onPress={() => router.push('/add-task')}
+              style={[styles.addButton, { backgroundColor: calendarTabColors.primary }]}
+            >
+              <Text style={styles.addButtonText}>{t('calendar.addTask')}</Text>
+            </TouchableOpacity>
+          </Card.Content>
+        </Card>
+      );
+    }
     
     return (
-      <List.Item
-        title={item.title}
-        description={item.description}
-        titleStyle={[
-          item.completed ? styles.completedText : null,
-          { color: theme.colors.onBackground }
+      <Card style={[styles.tasksCard, { backgroundColor: theme.colors.surface }]} elevation={2}>
+        <Card.Content>
+          <Text style={[styles.sectionTitle, { color: theme.colors.onSurface }]}>
+            {formatDateLabel(selected)}
+          </Text>
+          <ScrollView style={styles.tasksList}>
+            {selectedDateTasks.map((task, index) => (
+              <React.Fragment key={task.id}>
+                <List.Item
+                  title={task.title}
+                  description={task.description}
+                  left={props => (
+                    <List.Icon 
+                      {...props} 
+                      icon={task.completed ? "check-circle" : "circle-outline"} 
+                      color={task.completed ? theme.colors.success : calendarTabColors.primary}
+                    />
+                  )}
+                  right={props => (
+                    <IconButton
+                      icon="chevron-right"
+                      size={24}
+                      iconColor={theme.colors.onSurfaceVariant}
+                      onPress={() => router.push(`/edit-task?id=${task.id}`)}
+                    />
+                  )}
+                  titleStyle={[
+                    task.completed && styles.completedText,
+                    { color: theme.colors.onSurface }
+                  ]}
+                  descriptionStyle={{ color: theme.colors.onSurfaceVariant }}
+                  onPress={() => router.push(`/edit-task?id=${task.id}`)}
+                  style={styles.taskItem}
+                />
+                {index < selectedDateTasks.length - 1 && <Divider />}
+              </React.Fragment>
+            ))}
+          </ScrollView>
+        </Card.Content>
+      </Card>
+    );
+  };
+
+  // Custom theme for the calendar
+  const lightCalendarTheme = {
+    backgroundColor: '#FFFFFF',
+    calendarBackground: '#FFFFFF',
+    textSectionTitleColor: theme.colors.onSurface,
+    selectedDayBackgroundColor: calendarTabColors.primary,
+    selectedDayTextColor: '#ffffff',
+    todayTextColor: calendarTabColors.primary,
+    dayTextColor: theme.colors.onSurface,
+    textDisabledColor: theme.colors.onSurfaceDisabled,
+    dotColor: calendarTabColors.primary,
+    selectedDotColor: '#ffffff',
+    arrowColor: calendarTabColors.primary,
+    monthTextColor: theme.colors.onSurface,
+    indicatorColor: calendarTabColors.primary,
+    textDayFontWeight: '500',
+    textMonthFontWeight: '700',
+    textDayHeaderFontWeight: '500',
+    textDayFontSize: 16,
+    textMonthFontSize: 18,
+    textDayHeaderFontSize: 14
+  };
+
+  // Dark theme with forced white text for visibility
+  const darkCalendarTheme = {
+    ...lightCalendarTheme,
+    backgroundColor: '#151515',
+    calendarBackground: '#151515',
+    textSectionTitleColor: '#FFFFFF',
+    dayTextColor: '#FFFFFF',
+    textDisabledColor: 'rgba(255,255,255,0.4)',
+    arrowColor: '#FFFFFF',
+    monthTextColor: '#FFFFFF',
+    // Override day styles for dark mode
+    'stylesheet.day.basic': {
+      base: {
+        width: 32,
+        height: 32,
+        alignItems: 'center',
+        justifyContent: 'center',
+      },
+      text: {
+        color: '#FFFFFF',
+        fontWeight: '500',
+      },
+      today: {
+        backgroundColor: 'transparent',
+        borderWidth: 1,
+        borderColor: calendarTabColors.primary,
+        borderRadius: 16,
+      },
+      todayText: {
+        color: calendarTabColors.primary,
+        fontWeight: 'bold',
+      },
+      selected: {},
+      disabled: {},
+      disabledText: {
+        color: 'rgba(255,255,255,0.4)',
+      },
+    }
+  };
+
+  // Choose theme based on mode
+  const calendarTheme = isDarkMode ? darkCalendarTheme : lightCalendarTheme;
+
+  // Custom day component for better visibility in dark mode
+  const renderDay = (day, item) => {
+    if (!day) return <View style={styles.emptyDay} />;
+    
+    const isSelected = day.dateString === selected;
+    const isToday = day.dateString === format(new Date(), 'yyyy-MM-dd');
+    
+    return (
+      <TouchableOpacity
+        onPress={() => handleDateSelect(day)}
+        style={[
+          styles.dayContainer,
+          isSelected && styles.selectedDay,
+          isToday && styles.todayDay
         ]}
-        descriptionStyle={[
-          item.completed ? styles.completedText : null,
-          { color: theme.colors.onSurfaceVariant }
-        ]}
-        left={props => (
-          <List.Icon 
-            {...props} 
-            icon={item.completed ? "check-circle" : "circle-outline"} 
-            color={item.completed ? theme.colors.primary : theme.colors.onSurfaceVariant} 
-          />
-        )}
-        right={props => (
-          <View style={styles.itemRightContainer}>
-            {categoryName ? (
-              <Chip 
-                mode="flat" 
-                style={[styles.categoryChip, { backgroundColor: getCategoryColor(item.category) }]}
-                textStyle={{ color: 'white', fontSize: 12 }}
-              >
-                {categoryName}
-              </Chip>
-            ) : null}
-            {item.priority === 'high' && (
-              <View style={[styles.priorityIndicator, { backgroundColor: "#FF5252" }]} />
-            )}
+      >
+        <Text style={[
+          styles.dayText,
+          isDarkMode && styles.darkModeText,
+          isSelected && styles.selectedDayText,
+          isToday && styles.todayDayText
+        ]}>
+          {day.day}
+        </Text>
+        {markedDates[day.dateString]?.dots?.length > 0 && (
+          <View style={styles.dotContainer}>
+            {markedDates[day.dateString].dots.map((dot, index) => (
+              <View 
+                key={index} 
+                style={[styles.dot, { backgroundColor: dot.color }]} 
+              />
+            ))}
           </View>
         )}
-        style={[styles.taskItem, { backgroundColor: theme.colors.surface }]}
-      />
+      </TouchableOpacity>
     );
   };
 
   return (
-    <View style={[
-      styles.container,
-      { backgroundColor: theme.colors.background }
-    ]}>
-      <Appbar.Header>
-        <Appbar.Content title="Calendar" />
-      </Appbar.Header>
-      
-      <View style={[
-        styles.calendarContainer,
-        isDesktop && styles.desktopCalendarContainer,
-        { 
-          backgroundColor: theme.dark ? theme.colors.background : '#FFFFFF', 
-          borderRadius: 10,
-          borderColor: theme.dark ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.1)',
-          borderWidth: 1,
-          margin: 8,
-          minHeight: 380 // Add minimum height to prevent layout shifts
-        }
-      ]}>
-<Calendar
-  key={`calendar-${themeVersion}`} // Use themeVersion in key to force complete re-render
-  onDayPress={handleDayPress}
-  markedDates={markedDates}
-  theme={{
-    // Theme colors with explicit dark mode handling
-    calendarBackground: theme.dark ? theme.colors.background : '#FFFFFF',
-    backgroundColor: theme.dark ? theme.colors.background : '#FFFFFF',
-    monthTextColor: theme.dark ? '#ffffff' : theme.colors.onSurface,
-    textSectionTitleColor: theme.dark ? '#ffffff' : theme.colors.onSurface,
-    textMonthFontSize: 18,
-    dayTextColor: theme.dark ? '#ffffff' : theme.colors.onSurface,
-    textDayFontSize: 16,
-    textDisabledColor: theme.dark ? '#777777' : '#CCCCCC',
-    selectedDayBackgroundColor: theme.colors.primary,
-    selectedDayTextColor: '#ffffff',
-    todayTextColor: theme.colors.primary,
-    arrowColor: theme.colors.primary,
-    dotColor: theme.colors.primary,
-    
-    // Style header with explicit dark theme handling
-    'stylesheet.calendar.header': {
-      header: {
-        flexDirection: 'row',
-        justifyContent: 'space-between',
-        alignItems: 'center',
-        backgroundColor: theme.dark ? theme.colors.background : '#FFFFFF',
-        paddingVertical: 12,
-        paddingHorizontal: 16,
-      },
-      monthText: {
-        color: theme.dark ? '#ffffff' : theme.colors.onSurface,
-        fontSize: 18,
-        fontWeight: '600',
-      },
-      dayHeader: {
-        color: theme.dark ? '#ffffff' : theme.colors.onSurface,
-        fontSize: 14,
-        fontWeight: '500',
-        textAlign: 'center',
-      },
-      arrow: {
-        padding: 10,
-      },
-    },
-    
-    // Style main calendar with explicit dark theme handling
-    'stylesheet.calendar.main': {
-      container: {
-        backgroundColor: theme.dark ? theme.colors.background : '#FFFFFF',
-      },
-      week: {
-        flexDirection: 'row',
-        justifyContent: 'space-around',
-        backgroundColor: theme.dark ? theme.colors.background : '#FFFFFF',
-      }
-    },
-    
-    // Style days with explicit dark theme handling
-    'stylesheet.day.basic': {
-      base: {
-        width: 36,
-        height: 36,
-        alignItems: 'center',
-        justifyContent: 'center',
-        borderRadius: 18,
-        backgroundColor: theme.dark ? theme.colors.background : 'transparent',
-      },
-      text: {
-        color: theme.dark ? '#ffffff' : theme.colors.onSurface,
-        fontWeight: '400',
-      },
-      today: {
-        borderWidth: 1,
-        borderColor: theme.colors.primary,
-      },
-      todayText: {
-        color: theme.colors.primary,
-        fontWeight: '500',
-      },
-      selected: {
-        backgroundColor: theme.colors.primary,
-      },
-      selectedText: {
-        color: '#FFFFFF',
-        fontWeight: '500',
-      },
-      disabledText: {
-        color: theme.dark ? 'rgba(255, 255, 255, 0.3)' : 'rgba(0, 0, 0, 0.3)',
-      },
-      dot: {
-        width: 4,
-        height: 4,
-        marginTop: 1,
-        borderRadius: 2,
-        backgroundColor: theme.colors.primary,
-      },
-    }
-  }}
-  style={{
-    backgroundColor: theme.dark ? theme.colors.background : '#FFFFFF',
-    borderRadius: 10,
-    overflow: 'hidden',
-    width: '100%',
-    height: 380 // Set explicit height to prevent shifts
-  }}
-/>
-      </View>
-      
-      <ScrollView 
-        style={[
-          styles.tasksScrollView,
-          { backgroundColor: theme.colors.background }
-        ]}
-        contentContainerStyle={[
-          styles.tasksContainer,
-          isDesktop && styles.desktopTasksContainer,
-          { backgroundColor: theme.colors.background }
-        ]}
-      >
-        {loading ? (
-          <ActivityIndicator style={styles.loader} size="large" color={theme.colors.primary} />
-        ) : (
-          <>
-            <Text style={[styles.dateTitle, { color: theme.colors.onBackground }]}>
-              {new Date(selectedDate).toLocaleDateString('en-US', { 
-                weekday: 'long', 
-                month: 'long', 
-                day: 'numeric' 
-              })}
-            </Text>
-            
-            {filteredTasks.length === 0 ? (
-              <Text style={[styles.emptyText, { color: theme.colors.onBackground }]}>Нет задач на этот день</Text>
-            ) : (
-              <FlatList
-                data={filteredTasks}
-                renderItem={renderTaskItem}
-                keyExtractor={item => item.id}
-                ItemSeparatorComponent={() => <Divider />}
-                style={{ backgroundColor: theme.colors.background }}
-                contentContainerStyle={{ backgroundColor: theme.colors.background }}
+    <ThemeAwareView tabName="calendar">
+      <TabAppBar title={t('calendar.title')} tabName="calendar" />
+      <View style={styles.container}>
+        <PageBackground pageName="calendar" />
+        <StatusBar style={isDarkMode ? 'light' : 'dark'} />
+        <ScrollView 
+          contentContainerStyle={[
+            styles.scrollContent,
+            isDesktop && styles.desktopContent
+          ]}
+        >
+          <Card 
+            style={[
+              styles.calendarCard, 
+              { backgroundColor: isDarkMode ? '#151515' : '#FFFFFF' }
+            ]}
+            elevation={4}
+          >
+            <Card.Content 
+              style={[
+                styles.calendarContent, 
+                { backgroundColor: isDarkMode ? '#151515' : '#FFFFFF' }
+              ]}
+              className="calendar-container"
+            >
+              <RNCalendar
+                markingType={'multi-dot'}
+                markedDates={markedDates}
+                onDayPress={handleDateSelect}
+                enableSwipeMonths={true}
+                theme={calendarTheme}
+                style={styles.calendar}
+                testID="calendar"
+                className="calendar"
+                dayComponent={({date, state}) => renderDay(date, state)}
+                hideExtraDays={true}
+                key={`calendar-${isDarkMode ? 'dark' : 'light'}-${themeTimestamp}`}
               />
-            )}
-          </>
-        )}
-      </ScrollView>
-    </View>
+            </Card.Content>
+          </Card>
+          
+          {renderSelectedDateTasks()}
+          
+          <View style={styles.bottomPadding} />
+        </ScrollView>
+        
+        <FAB
+          style={[
+            styles.fab,
+            { backgroundColor: '#00b894' }
+          ]}
+          icon="plus"
+          onPress={() => router.push('/add-task')}
+          color="#fff"
+          label={t('calendar.addTask')}
+        />
+      </View>
+    </ThemeAwareView>
   );
 }
 
 const styles = StyleSheet.create({
+  outerContainer: {
+    flex: 1,
+    width: '100%',
+  },
   container: {
     flex: 1,
     width: '100%',
-    marginLeft: 0,
   },
-  calendarContainer: {
-    paddingHorizontal: 16,
-    paddingTop: 16,
-    width: '100%',
+  scrollContent: {
+    padding: Platform.OS === 'web' ? 16 : 0,
+    paddingLeft: Platform.OS === 'web' ? 16 : 0,
+    paddingRight: Platform.OS === 'web' ? 16 : 0,
+    paddingBottom: Platform.OS === 'web' ? 100 : 80,
   },
-  desktopCalendarContainer: {
-    maxWidth: 1000,
+  desktopContent: {
+    maxWidth: 1200,
     alignSelf: 'center',
-    paddingHorizontal: 32,
+    paddingHorizontal: 50,
+  },
+  calendarCard: {
+    borderRadius: 12,
+    marginBottom: 16,
+    overflow: 'hidden',
+    marginLeft: Platform.OS === 'web' ? 0 : -16,
+    marginRight: Platform.OS === 'web' ? 0 : -16,
+    width: Platform.OS === 'web' ? '100%' : 'auto',
+  },
+  calendarContent: {
+    padding: 0,
   },
   calendar: {
-    width: '100%', // Ensure full width
-    borderRadius: 10,
+    paddingBottom: 10,
+  },
+  calendarDayStyle: {
+    color: '#ffffff',
+    fontWeight: '500',
+  },
+  tasksCard: {
+    borderRadius: 12,
+    marginBottom: 16,
     overflow: 'hidden',
-    backgroundColor: 'transparent', // This ensures calendar inherits parent background
+    marginLeft: Platform.OS === 'web' ? 0 : -16,
+    marginRight: Platform.OS === 'web' ? 0 : -16,
+    width: Platform.OS === 'web' ? '100%' : 'auto',
   },
-  tasksScrollView: {
-    flex: 1,
-    width: '100%',
-  },
-  tasksContainer: {
-    padding: 16,
-    paddingBottom: Platform.OS === 'ios' ? 120 : 100, // Extra padding for bottom tabs
-  },
-  desktopTasksContainer: {
-    maxWidth: 1000,
-    alignSelf: 'center',
-    paddingHorizontal: 32,
-  },
-  dateTitle: {
+  sectionTitle: {
     fontSize: 18,
-    fontWeight: 'bold',
-    marginVertical: 16,
-    textAlign: 'center',
+    fontWeight: '700',
+    marginBottom: 12,
   },
-  emptyText: {
-    padding: 16,
-    textAlign: 'center',
-  },
-  completedText: {
-    textDecorationLine: 'line-through',
-    opacity: 0.5,
-  },
-  loader: {
-    flex: 1,
+  loadingContainer: {
+    height: 200,
     justifyContent: 'center',
     alignItems: 'center',
   },
-  categoryChip: {
-    height: 24,
-    marginRight: 8,
-  },
-  itemRightContainer: {
-    flexDirection: 'row',
+  emptyContent: {
+    height: 180,
+    justifyContent: 'center',
     alignItems: 'center',
   },
-  priorityIndicator: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-    marginRight: 8,
+  emptyText: {
+    fontSize: 16,
+    marginBottom: 16,
+    textAlign: 'center',
+  },
+  addButton: {
+    paddingVertical: 10,
+    paddingHorizontal: 20,
+    borderRadius: 20,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  addButtonText: {
+    color: '#fff',
+    fontWeight: '600',
+    fontSize: 16,
+  },
+  tasksList: {
+    maxHeight: 350,
   },
   taskItem: {
-    // Add any additional styles for the task item if needed
+    paddingVertical: 8,
+  },
+  completedText: {
+    textDecorationLine: 'line-through',
+    opacity: 0.6,
+  },
+  bottomPadding: {
+    height: 100,
+  },
+  fab: {
+    position: 'absolute',
+    margin: 16,
+    right: 0,
+    bottom: 0,
+  },
+  emptyDay: {
+    width: 32,
+    height: 32,
+  },
+  dayContainer: {
+    width: 32,
+    height: 32,
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderRadius: 16,
+  },
+  selectedDay: {
+    backgroundColor: '#00b894',
+  },
+  todayDay: {
+    borderWidth: 1,
+    borderColor: '#00b894',
+  },
+  dayText: {
+    fontSize: 16,
+    fontWeight: '500',
+  },
+  darkModeText: {
+    color: '#ffffff',
+  },
+  selectedDayText: {
+    color: '#ffffff',
+    fontWeight: 'bold',
+  },
+  todayDayText: {
+    color: '#00b894',
+    fontWeight: 'bold',
+  },
+  dotContainer: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    marginTop: 2,
+  },
+  dot: {
+    width: 4,
+    height: 4,
+    borderRadius: 2,
+    marginHorizontal: 1,
   },
 }); 

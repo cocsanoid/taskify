@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { 
   View, 
   StyleSheet, 
@@ -22,6 +22,7 @@ const WebDatePicker = ({ value, onChange, style, minDate = new Date() }) => {
   const [selectedDate, setSelectedDate] = useState(value || null);
   const [currentViewDate, setCurrentViewDate] = useState(value || new Date());
   const [showPicker, setShowPicker] = useState(false);
+  const calendarRef = useRef(null);
   
   // Normalize minDate to midnight
   const normalizedMinDate = React.useMemo(() => {

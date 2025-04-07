@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { View, FlatList, StyleSheet, ScrollView, Platform, Dimensions } from 'react-native';
+import { View, FlatList, StyleSheet, ScrollView, Platform, Dimensions, TouchableOpacity, useColorScheme } from 'react-native';
 import { 
   Card, 
   Text, 
@@ -11,7 +11,10 @@ import {
   Checkbox,
   Button,
   useTheme,
-  IconButton
+  IconButton,
+  FAB,
+  Surface,
+  ProgressBar
 } from 'react-native-paper';
 import { router } from 'expo-router';
 import { auth, getTasks, updateTask } from '../utils/_firebase';
@@ -20,16 +23,27 @@ import { format, startOfWeek, addDays, isSameDay, isToday, isTomorrow, isPast, i
 import { useTranslation } from 'react-i18next';
 import { ru, enUS } from 'date-fns/locale';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import TabBackground from '../components/TabBackground';
+import TabAppBar from '../components/TabAppBar';
+import PageBackground from '../../components/PageBackground';
+import { collection, addDoc, getDocs, updateDoc, doc, deleteDoc, query, where, increment, Timestamp } from 'firebase/firestore';
+import { db } from '../utils/_firebase';
 
 export default function HomeScreen() {
   const { t, i18n } = useTranslation();
   const theme = useTheme();
+  const systemColorScheme = useColorScheme();
+  const [darkMode, setDarkMode] = useState(systemColorScheme === 'dark');
   const [tasks, setTasks] = useState([]);
   const [loading, setLoading] = useState(true);
   const [selectedDate, setSelectedDate] = useState(new Date());
   const [filteredTasks, setFilteredTasks] = useState([]);
   const [upcomingTasks, setUpcomingTasks] = useState([]);
   const [lastUpdated, setLastUpdated] = useState('0');
+  const [menuVisible, setMenuVisible] = useState(false);
+  const [habits, setHabits] = useState([]);
+  const [habitsLoading, setHabitsLoading] = useState(true);
+  const [habitsLastUpdated, setHabitsLastUpdated] = useState('0');
 
   // Add responsive state
   const [dimensions, setDimensions] = useState(Dimensions.get('window'));
@@ -38,6 +52,12 @@ export default function HomeScreen() {
   
   // Get current locale for date formatting
   const currentLocale = i18n.language === 'ru' ? ru : enUS;
+  
+  // Create fallback colors in case theme.colors.homeTab is undefined
+  const homeTabColors = theme.colors.homeTab || {
+    primary: theme.colors.primary,
+    secondary: theme.colors.secondary
+  };
   
   // Listen for dimension changes
   useEffect(() => {
@@ -111,6 +131,46 @@ export default function HomeScreen() {
     setUpcomingTasks(upcoming);
   }, [tasks, selectedDate]);
 
+  // Load dark mode setting from AsyncStorage
+  useEffect(() => {
+    const loadThemePreference = async () => {
+      try {
+        const savedDarkMode = await AsyncStorage.getItem('darkMode');
+        if (savedDarkMode !== null) {
+          setDarkMode(JSON.parse(savedDarkMode));
+        } else {
+          setDarkMode(systemColorScheme === 'dark');
+        }
+      } catch (error) {
+        console.error('Failed to load theme preference:', error);
+        setDarkMode(systemColorScheme === 'dark');
+      }
+    };
+    
+    loadThemePreference();
+  }, [systemColorScheme]);
+
+  // Add useEffect for habits
+  useEffect(() => {
+    loadHabits();
+    
+    // Set up polling to check for changes in habits
+    const checkForHabitUpdates = async () => {
+      try {
+        const lastUpdatedTimestamp = await AsyncStorage.getItem('habitsLastUpdated');
+        if (lastUpdatedTimestamp && lastUpdatedTimestamp !== habitsLastUpdated) {
+          setHabitsLastUpdated(lastUpdatedTimestamp);
+          loadHabits();
+        }
+      } catch (error) {
+        console.error('Error checking for habit updates:', error);
+      }
+    };
+    
+    const intervalId = setInterval(checkForHabitUpdates, 1000);
+    return () => clearInterval(intervalId);
+  }, [habitsLastUpdated]);
+
   const fetchTasks = async () => {
     try {
       setLoading(true);
@@ -140,15 +200,17 @@ export default function HomeScreen() {
       setTasks(tasks.map(task => 
         task.id === taskId ? { ...task, completed: !completed } : task
       ));
+      
+      // Add timestamp to AsyncStorage to notify other components of task changes
+      await AsyncStorage.setItem('tasksLastUpdated', Date.now().toString());
     } catch (error) {
       console.error('Error updating task:', error);
     }
   };
 
-  // This function is now for display only, not for toggling completion
-  const renderTaskCompletion = (task) => (
-    <View style={{ width: 40 }} />
-  );
+  const handleOpenMenu = () => {
+    setMenuVisible(true);
+  };
 
   const formatDueDate = (dueDate) => {
     if (!dueDate) return null;
@@ -178,7 +240,7 @@ export default function HomeScreen() {
     }
 
     return (
-      <Card style={[styles.calendarCard, { backgroundColor: theme.colors.surface }]}>
+      <Card style={[styles.calendarCard, { backgroundColor: theme.colors.surface }]} elevation={2}>
         <Card.Content>
           <Text style={[styles.sectionTitle, { color: theme.colors.onSurface }]}>{t('tasks.thisWeek')}</Text>
           <ScrollView horizontal showsHorizontalScrollIndicator={false}>
@@ -197,44 +259,46 @@ export default function HomeScreen() {
                 });
                 
                 return (
-                  <Button
+                  <TouchableOpacity
                     key={index}
-                    mode={isSelected ? "contained" : "outlined"}
                     onPress={() => handleDateSelect(date)}
-                    labelStyle={[
-                      styles.dayLabel,
-                      isCurrentDay && !isSelected && { color: theme.colors.primary }
-                    ]}
                     style={[
-                      styles.dayButton,
-                      isSelected && { backgroundColor: theme.colors.primary }
+                      styles.dateButton,
+                      isSelected && [
+                        styles.selectedDate,
+                        { backgroundColor: homeTabColors.primary }
+                      ]
                     ]}
+                    activeOpacity={0.7}
                   >
-                    <Text style={[
-                      styles.dayText,
-                      isSelected && { color: 'white' },
-                      !isSelected && isCurrentDay && { color: theme.colors.primary }
-                    ]}>
-                      {isMobile 
-                        ? format(date, 'EEEE', { locale: currentLocale }) 
-                        : format(date, 'EEE', { locale: currentLocale })}
+                    <Text 
+                      style={[
+                        styles.dayName, 
+                        isSelected && styles.selectedText,
+                        { color: isSelected ? '#fff' : theme.colors.onSurface }
+                      ]}
+                    >
+                      {format(date, 'E', { locale: currentLocale }).substring(0, 2)}
                     </Text>
-                    <Text style={[
-                      styles.dateText,
-                      isSelected && { color: 'white' },
-                      !isSelected && isCurrentDay && { color: theme.colors.primary }
-                    ]}>
-                      {format(date, 'd', { locale: currentLocale })}
+                    <Text 
+                      style={[
+                        styles.dayNumber,
+                        isSelected && styles.selectedText,
+                        isCurrentDay && !isSelected && { color: theme.colors.primary },
+                        { color: isSelected ? '#fff' : theme.colors.onSurface }
+                      ]}
+                    >
+                      {format(date, 'd')}
                     </Text>
                     {hasTask && !isSelected && (
                       <View 
                         style={[
-                          styles.taskDot,
-                          { backgroundColor: isCurrentDay ? theme.colors.primary : theme.colors.tertiary }
+                          styles.taskIndicator,
+                          { backgroundColor: homeTabColors.primary }
                         ]} 
                       />
                     )}
-                  </Button>
+                  </TouchableOpacity>
                 );
               })}
             </View>
@@ -245,12 +309,74 @@ export default function HomeScreen() {
   };
 
   const renderDayTasks = () => {
+    if (loading) {
+      return (
+        <View style={styles.loadingContainer}>
+          <ActivityIndicator size="large" color={theme.colors.primary} />
+        </View>
+      );
+    }
+
     if (filteredTasks.length === 0) {
       return (
-        <Card style={[styles.noTasksCard, { backgroundColor: theme.colors.surface }]}>
-          <Card.Content style={styles.centeredContent}>
-            <Text style={{ color: theme.colors.onSurface }}>
-              {t('tasks.noTasksFor', { date: format(selectedDate, 'EEEE, MMMM d', { locale: currentLocale }) })}
+        <Card style={[styles.emptyCard, { backgroundColor: theme.colors.surface }]} elevation={2}>
+          <Card.Content style={styles.emptyContent}>
+            <Text style={[styles.emptyText, { color: theme.colors.onSurfaceDisabled }]}>
+              {t('tasks.noTasks')}
+            </Text>
+            <Button 
+              mode="contained" 
+              onPress={() => router.push('/add-task')}
+              style={[styles.addButton, { backgroundColor: homeTabColors.primary }]}
+            >
+              {t('tasks.addTask')}
+            </Button>
+          </Card.Content>
+        </Card>
+      );
+    }
+
+    return (
+      <Card style={[styles.tasksCard, { backgroundColor: theme.colors.surface }]} elevation={2}>
+        <Card.Content>
+          <Text style={[styles.sectionTitle, { color: theme.colors.onSurface }]}>
+            {format(selectedDate, 'EEEE, MMMM d', { locale: currentLocale })}
+          </Text>
+          {filteredTasks.map((task, index) => (
+            <React.Fragment key={task.id}>
+              <List.Item
+                title={task.title}
+                description={task.description}
+                left={() => (
+                  <Checkbox
+                    status={task.completed ? 'checked' : 'unchecked'}
+                    onPress={() => toggleTaskCompleted(task.id, task.completed)}
+                    color={homeTabColors.primary}
+                  />
+                )}
+                titleStyle={[
+                  task.completed && styles.completedText,
+                  { color: theme.colors.onSurface }
+                ]}
+                descriptionStyle={{ color: theme.colors.onSurfaceVariant }}
+                onPress={() => router.push(`/edit-task?id=${task.id}`)}
+                style={styles.taskItem}
+              />
+              {index < filteredTasks.length - 1 && <Divider />}
+            </React.Fragment>
+          ))}
+        </Card.Content>
+      </Card>
+    );
+  };
+
+  const renderUpcomingTasks = () => {
+    if (upcomingTasks.length === 0 && !loading) {
+      return (
+        <Card style={[styles.upcomingCard, { backgroundColor: theme.colors.surface }]} elevation={2}>
+          <Card.Content style={styles.emptyContent}>
+            <Text style={[styles.emptyText, { color: theme.colors.onSurfaceDisabled }]}>
+              {t('tasks.noUpcomingTasks')}
             </Text>
           </Card.Content>
         </Card>
@@ -258,263 +384,486 @@ export default function HomeScreen() {
     }
 
     return (
-      <Card style={[styles.tasksCard, { backgroundColor: theme.colors.surface }]}>
+      <Card style={[styles.upcomingCard, { backgroundColor: theme.colors.surface }]} elevation={2}>
         <Card.Content>
           <Text style={[styles.sectionTitle, { color: theme.colors.onSurface }]}>
-            {isToday(selectedDate) 
-              ? t('tasks.todaysTasks')
-              : t('tasks.tasksFor', { date: format(selectedDate, 'EEEE, MMMM d', { locale: currentLocale }) })}
+            {t('tasks.upcoming')}
           </Text>
-          <View>
-            {filteredTasks.map((task) => (
-              <List.Item
-                key={task.id}
-                title={task.title}
-                description={task.description}
-                left={() => renderTaskCompletion(task)}
-                right={() => {
-                  const dueDate = formatDueDate(task.dueDate);
-                  return dueDate ? (
-                    <View style={styles.dueDateContainer}>
-                      <Text style={{ color: dueDate.color }}>{dueDate.text}</Text>
-                    </View>
-                  ) : null;
-                }}
-                style={[
-                  styles.taskItem,
-                  task.completed ? styles.completedTask : null,
-                  { backgroundColor: theme.colors.surface }
-                ]}
-                titleStyle={task.completed ? styles.completedTaskText : null}
-                descriptionStyle={task.completed ? styles.completedTaskText : null}
-              />
-            ))}
-          </View>
+          <ScrollView style={styles.upcomingList}>
+            {upcomingTasks.slice(0, 5).map((task, index) => {
+              const dueDate = formatDueDate(task.dueDate);
+              
+              return (
+                <React.Fragment key={task.id}>
+                  <List.Item
+                    title={task.title}
+                    description={task.description}
+                    right={() => (
+                      <Badge 
+                        style={[
+                          styles.dueBadge,
+                          dueDate && { backgroundColor: dueDate.color }
+                        ]}
+                      >
+                        {dueDate?.text}
+                      </Badge>
+                    )}
+                    titleStyle={{ color: theme.colors.onSurface }}
+                    descriptionStyle={{ color: theme.colors.onSurfaceVariant }}
+                    onPress={() => router.push(`/edit-task?id=${task.id}`)}
+                    style={styles.upcomingTask}
+                  />
+                  {index < upcomingTasks.slice(0, 5).length - 1 && <Divider />}
+                </React.Fragment>
+              );
+            })}
+            {upcomingTasks.length > 5 && (
+              <Button 
+                mode="text" 
+                onPress={() => router.push('/(tabs)/index')}
+                style={styles.viewAllButton}
+              >
+                {t('tasks.viewAll')}
+              </Button>
+            )}
+          </ScrollView>
         </Card.Content>
       </Card>
     );
   };
 
-  const renderUpcomingTasks = () => {
-    if (upcomingTasks.length === 0) {
+  // Function to load habits
+  const loadHabits = async () => {
+    try {
+      setHabitsLoading(true);
+      const userId = auth.currentUser?.uid;
+      
+      // Check if user is logged in before querying
+      if (!userId) {
+        console.log('User not authenticated, skipping habits loading');
+        setHabits([]);
+        return;
+      }
+      
+      const habitsRef = collection(db, 'habits');
+      const q = query(habitsRef, where('userId', '==', userId));
+      const querySnapshot = await getDocs(q);
+      
+      const loadedHabits = querySnapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data()
+      }));
+      
+      setHabits(loadedHabits);
+    } catch (error) {
+      console.error('Error loading habits:', error);
+    } finally {
+      setHabitsLoading(false);
+    }
+  };
+
+  // Function to complete a habit
+  const completeHabit = async (habitId) => {
+    try {
+      const habitRef = doc(db, 'habits', habitId);
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      
+      await updateDoc(habitRef, {
+        lastCompleted: Timestamp.fromDate(today),
+        streak: increment(1)
+      });
+      
+      // Update local state
+      setHabits(habits.map(habit => 
+        habit.id === habitId 
+          ? { ...habit, lastCompleted: Timestamp.fromDate(today), streak: habit.streak + 1 }
+          : habit
+      ));
+      
+      // Notify other components about the change
+      await AsyncStorage.setItem('habitsLastUpdated', Date.now().toString());
+    } catch (error) {
+      console.error('Error completing habit:', error);
+    }
+  };
+
+  // Function to render habits section
+  const renderHabits = () => {
+    if (habitsLoading) {
       return (
-        <Card style={[styles.noTasksCard, { backgroundColor: theme.colors.surface }]}>
-          <Card.Content style={styles.centeredContent}>
-            <Text style={{ color: theme.colors.onSurface }}>Нет предстоящих задач</Text>
+        <Card style={[styles.habitsCard, { backgroundColor: theme.colors.surface }]} elevation={2}>
+          <Card.Content style={styles.loadingContainer}>
+            <ActivityIndicator size="large" color={theme.colors.primary} />
+          </Card.Content>
+        </Card>
+      );
+    }
+
+    if (habits.length === 0) {
+      return (
+        <Card style={[styles.habitsCard, { backgroundColor: theme.colors.surface }]} elevation={2}>
+          <Card.Content style={styles.emptyContent}>
+            <Text style={[styles.emptyText, { color: theme.colors.onSurfaceVariant }]}>
+              {t('habits.noHabits')}
+            </Text>
+            <Button 
+              mode="outlined" 
+              icon="plus" 
+              onPress={() => router.push('/(tabs)/habits')}
+              style={styles.addButton}
+            >
+              {t('habits.addNewHabit')}
+            </Button>
           </Card.Content>
         </Card>
       );
     }
 
     return (
-      <Card style={[styles.tasksCard, { backgroundColor: theme.colors.surface }]}>
+      <Card style={[styles.habitsCard, { backgroundColor: theme.colors.surface }]} elevation={2}>
         <Card.Content>
-          <Text style={[styles.sectionTitle, { color: theme.colors.onSurface }]}>
-            Предстоящие задачи
-          </Text>
-          {loading ? (
-            <ActivityIndicator animating={true} color={theme.colors.primary} />
-          ) : upcomingTasks.length > 0 ? (
-            upcomingTasks.slice(0, 5).map(task => {
-              const dueDate = formatDueDate(task.dueDate);
+          <View style={styles.habitHeader}>
+            <Text style={[styles.sectionTitle, { color: theme.colors.onSurface }]}>
+              {t('habits.dailyHabits')}
+            </Text>
+            <IconButton 
+              icon="arrow-right" 
+              size={20} 
+              onPress={() => router.push('/(tabs)/habits')}
+              iconColor={theme.colors.primary}
+            />
+          </View>
+          
+          <View style={styles.habitsList}>
+            {habits.slice(0, 3).map(habit => {
+              const isCompletedToday = habit.lastCompleted ? 
+                new Date(habit.lastCompleted.seconds * 1000).toDateString() === new Date().toDateString() : 
+                false;
+              
               return (
-                <List.Item
-                  key={task.id}
-                  title={task.title}
-                  description={task.description}
-                  left={() => renderTaskCompletion(task)}
-                  right={() => (
-                    dueDate ? (
-                      <View style={styles.dueDateContainer}>
-                        <Text style={{ color: dueDate.color }}>{dueDate.text}</Text>
-                      </View>
-                    ) : null
-                  )}
+                <Surface 
+                  key={habit.id} 
                   style={[
-                    styles.taskItem,
-                    { backgroundColor: theme.colors.surface }
+                    styles.habitItem, 
+                    { backgroundColor: isCompletedToday ? theme.colors.secondaryContainer : theme.colors.surfaceVariant }
                   ]}
-                />
+                  elevation={1}
+                >
+                  <View style={styles.habitInfo}>
+                    <Text style={[styles.habitTitle, { color: theme.colors.onSurface }]}>
+                      {habit.title}
+                    </Text>
+                    <Text style={[styles.habitStreak, { color: theme.colors.onSurfaceVariant }]}>
+                      {t('habits.streak', { count: habit.streak })}
+                    </Text>
+                  </View>
+                  <TouchableOpacity
+                    style={[
+                      styles.habitCheckbox,
+                      isCompletedToday && { backgroundColor: theme.colors.primary }
+                    ]}
+                    onPress={() => !isCompletedToday && completeHabit(habit.id)}
+                    disabled={isCompletedToday}
+                  >
+                    {isCompletedToday && (
+                      <IconButton
+                        icon="check"
+                        size={20}
+                        iconColor="#fff"
+                        style={{ margin: 0 }}
+                      />
+                    )}
+                  </TouchableOpacity>
+                </Surface>
               );
-            })
-          ) : (
-            <Card style={[styles.noTasksCard, { backgroundColor: theme.colors.surface }]}>
-              <Card.Content style={styles.centeredContent}>
-                <Text style={{ color: theme.colors.onSurface }}>Нет предстоящих задач</Text>
-              </Card.Content>
-            </Card>
-          )}
+            })}
+            
+            {habits.length > 3 && (
+              <Button 
+                mode="text" 
+                onPress={() => router.push('/(tabs)/habits')}
+                style={styles.viewAllButton}
+              >
+                {t('habits.viewAll')}
+              </Button>
+            )}
+          </View>
         </Card.Content>
       </Card>
     );
   };
 
+  // Modify the return statement to include habits
   return (
-    <View style={[
-      styles.container, 
-      { backgroundColor: theme.colors.background }
-    ]}>
-      <StatusBar style={theme.dark ? 'light' : 'dark'} />
-      <Appbar.Header 
-        elevated
-        style={{ 
-          backgroundColor: theme.dark ? '#000000' : '#FFFFFF',
-        }}
-      >
-        <Appbar.Content 
-          title="Моя панель" 
-          titleStyle={{ 
-            color: theme.dark ? '#FFFFFF' : '#000000' 
-          }} 
-        />
-        <Appbar.Action 
-          icon="refresh" 
-          color={theme.dark ? '#FFFFFF' : '#000000'} 
-        />
-      </Appbar.Header>
-
-      {loading ? (
-        <View style={styles.loadingContainer}>
-          <ActivityIndicator size="large" color={theme.colors.primary} />
-        </View>
-      ) : (
+    <TabBackground tabName="home">
+      <TabAppBar title={t('home.title')} />
+      
+      <View style={[styles.container, { backgroundColor: theme.colors.background }]}>
+        <PageBackground pageName="home" />
+        <StatusBar style={darkMode ? 'light' : 'dark'} />
+        
         <ScrollView 
           contentContainerStyle={[
-            styles.scrollContainer,
-            { backgroundColor: theme.colors.background },
-            // Add additional padding on desktop
-            isDesktop && styles.desktopScrollContainer
+            styles.contentContainer,
+            isDesktop ? styles.desktopContainer : styles.mobileContainer
           ]}
-          showsVerticalScrollIndicator={false}
         >
+          <View style={styles.header}>
+            <Text 
+              style={[
+                styles.welcomeText, 
+                { color: theme.colors.onSurface }
+              ]}
+            >
+              {t('home.welcomeMessage')}
+            </Text>
+            <Text 
+              style={[
+                styles.dateText, 
+                { color: theme.colors.onSurfaceVariant }
+              ]}
+            >
+              {format(new Date(), 'EEEE, MMMM d', { locale: currentLocale })}
+            </Text>
+          </View>
+
           {renderWeekCalendar()}
+          {renderHabits()}
           {renderDayTasks()}
           {renderUpcomingTasks()}
           
-          {/* Spacer for bottom nav */}
-          <View style={{ height: 100 }} />
+          <View style={styles.bottomPadding} />
         </ScrollView>
-      )}
-    </View>
+        
+        <FAB
+          icon="plus"
+          style={[
+            styles.fab,
+            { backgroundColor: homeTabColors.primary }
+          ]}
+          color="#fff"
+          onPress={() => router.push('/add-task')}
+        />
+      </View>
+    </TabBackground>
   );
 }
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    width: '100%', // Ensure full width
-    marginLeft: 0, // Reset any margins
-    marginRight: 0,
-  },
-  scrollContainer: {
-    paddingHorizontal: 16, // Add consistent horizontal padding
-    paddingTop: 16,
-    paddingBottom: Platform.OS === 'ios' ? 120 : 100, // Extra padding for bottom tabs
-    alignItems: 'stretch', // Ensure content stretches full width
     width: '100%',
   },
-  desktopScrollContainer: {
-    maxWidth: 1200, // Limit width on large screens
-    alignSelf: 'center', // Center content on large screens
-    paddingHorizontal: 32, // More padding on desktop
+  contentContainer: {
+    paddingTop: 16,
+    paddingBottom: 100, // Extra padding for bottom tabs
   },
-  loadingContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
+  desktopContainer: {
+    maxWidth: 1280,
+    marginHorizontal: 'auto',
+    paddingHorizontal: 24,
   },
-  tasksContainer: {
-    flex: 1, 
-    width: '100%', // Ensure full width
+  mobileContainer: {
+    width: '100%',
+    paddingHorizontal: 16,
+  },
+  header: {
+    marginBottom: 20,
+    ...(Platform.OS === 'web' && Dimensions.get('window').width >= 1024 ? {
+      marginTop: 10,
+    } : {}),
+  },
+  welcomeText: {
+    fontSize: 24,
+    fontWeight: 'bold',
+    marginBottom: 4,
+    ...(Platform.OS === 'web' && Dimensions.get('window').width >= 1024 ? {
+      fontSize: 32,
+    } : {}),
+  },
+  dateText: {
+    fontSize: 16,
+    ...(Platform.OS === 'web' && Dimensions.get('window').width >= 1024 ? {
+      fontSize: 18,
+    } : {}),
   },
   calendarCard: {
     marginBottom: 16,
-    width: '100%', // Ensure full width
-    marginLeft: 0, // Reset any margins
-    marginRight: 0,
-  },
-  card: {
-    marginBottom: 16,
-    width: '100%', // Ensure full width
-    marginLeft: 0, // Reset any margins
-    marginRight: 0,
+    borderRadius: 12,
+    overflow: 'hidden',
+    width: '100%',
+    ...(Platform.OS === 'web' && Dimensions.get('window').width >= 1024 ? {
+      borderRadius: 16,
+      marginBottom: 24,
+    } : {}),
   },
   sectionTitle: {
     fontSize: 18,
-    fontWeight: 'bold',
+    fontWeight: '600',
     marginBottom: 12,
   },
   weekContainer: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    marginTop: 8,
+    paddingVertical: 8,
   },
-  dayButton: {
-    marginRight: 8,
-    width: Platform.OS === 'ios' || Platform.OS === 'android' ? 100 : 64,
-    height: 80,
-    justifyContent: 'center',
-  },
-  dayLabel: {
-    fontSize: 12,
-  },
-  dayText: {
-    fontSize: 12,
-    textAlign: 'center',
-  },
-  dateText: {
-    fontSize: 20,
-    fontWeight: 'bold',
-    textAlign: 'center',
-  },
-  taskDot: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
-    marginTop: 4,
-  },
-  completedText: {
-    textDecorationLine: 'line-through',
-    opacity: 0.6,
-  },
-  centeredContent: {
+  dateButton: {
     alignItems: 'center',
     justifyContent: 'center',
-    minHeight: 80,
+    paddingVertical: 8,
+    paddingHorizontal: 14,
+    marginRight: 10,
+    borderRadius: 12,
+    position: 'relative',
   },
-  badge: {
-    alignSelf: 'center',
+  selectedDate: {
+    ...(Platform.OS === 'web' 
+      ? {
+          boxShadow: '0px 2px 3px rgba(0,0,0,0.1)'
+        } 
+      : {
+          elevation: 3,
+        }
+    ),
+  },
+  dayName: {
+    fontSize: 14,
+    marginBottom: 4,
+    textTransform: 'uppercase',
+  },
+  dayNumber: {
+    fontSize: 18,
+    fontWeight: '700',
+  },
+  selectedText: {
+    color: '#fff',
+  },
+  taskIndicator: {
+    width: 4,
+    height: 4,
+    borderRadius: 2,
+    marginTop: 4,
   },
   tasksCard: {
     marginBottom: 16,
-    elevation: 2,
+    borderRadius: 12,
+    overflow: 'hidden',
+    width: '100%',
+    ...(Platform.OS === 'web' && Dimensions.get('window').width >= 1024 ? {
+      borderRadius: 16,
+      marginBottom: 24,
+    } : {}),
   },
-  noTasksCard: {
+  loadingContainer: {
+    height: 200,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  emptyCard: {
     marginBottom: 16,
-    elevation: 2,
-    minHeight: 100,
+    borderRadius: 12,
+    height: 200,
+    overflow: 'hidden',
   },
-  taskMetadata: {
-    flexDirection: 'row',
+  emptyContent: {
+    flex: 1,
+    justifyContent: 'center',
     alignItems: 'center',
   },
-  dueDateContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
+  emptyText: {
+    marginBottom: 16,
+    fontSize: 16,
+    textAlign: 'center',
+  },
+  addButton: {
+    borderRadius: 20,
   },
   taskItem: {
-    padding: 16,
+    paddingVertical: 8,
   },
-  completedTask: {
+  completedText: {
+    textDecorationLine: 'line-through',
     opacity: 0.7,
   },
-  completedTaskText: {
-    textDecorationLine: 'line-through',
-    opacity: 0.6,
+  upcomingCard: {
+    marginBottom: 16,
+    borderRadius: 12,
+    overflow: 'hidden',
+    width: '100%',
+    ...(Platform.OS === 'web' && Dimensions.get('window').width >= 1024 ? {
+      borderRadius: 16,
+      marginBottom: 24,
+    } : {}),
   },
-  infoCard: {
+  upcomingList: {
+    maxHeight: 300,
+  },
+  upcomingTask: {
+    paddingVertical: 8,
+  },
+  dueBadge: {
+    alignSelf: 'center',
+    borderRadius: 12,
+  },
+  viewAllButton: {
+    alignSelf: 'center',
+    marginTop: 8,
+  },
+  bottomPadding: {
+    height: 100, // Adjust this value based on your design
+  },
+  fab: {
+    position: 'absolute',
     margin: 16,
-    marginTop: 16,
+    right: 0,
+    bottom: 16,
+  },
+  habitsCard: {
+    marginBottom: 16,
+    borderRadius: 12,
+    overflow: 'hidden',
+    width: '100%',
+    ...(Platform.OS === 'web' && Dimensions.get('window').width >= 1024 ? {
+      borderRadius: 16,
+      marginBottom: 24,
+    } : {}),
+  },
+  habitHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
     marginBottom: 8,
+  },
+  habitsList: {
+    marginTop: 8,
+  },
+  habitItem: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    padding: 12,
+    borderRadius: 12,
+    marginBottom: 8,
+  },
+  habitInfo: {
+    flex: 1,
+  },
+  habitTitle: {
+    fontSize: 16,
+    fontWeight: '500',
+    marginBottom: 4,
+  },
+  habitStreak: {
+    fontSize: 12,
+  },
+  habitCheckbox: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    borderWidth: 2,
+    borderColor: 'rgba(0,0,0,0.1)',
+    justifyContent: 'center',
+    alignItems: 'center',
   },
 }); 

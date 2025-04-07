@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { View, Platform, StyleSheet, useColorScheme, TouchableOpacity } from 'react-native';
 import { Button, Portal, Modal, Text, useTheme, IconButton } from 'react-native-paper';
 import DateTimePicker from '@react-native-community/datetimepicker';
@@ -20,6 +20,7 @@ export default function PlatformDatePicker({
   const [darkMode, setDarkMode] = useState(false);
   const systemColorScheme = useColorScheme();
   const theme = useTheme();
+  const calendarContainerRef = useRef(null);
 
   // Load dark mode preference
   useEffect(() => {

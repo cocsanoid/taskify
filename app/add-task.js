@@ -43,6 +43,7 @@ export default function AddTaskScreen() {
   const [userTheme, setUserTheme] = useState('light');
   const { width } = Dimensions.get('window');
   const isLargeScreen = width > 768;
+  const isPhoneSize = width < 480;
   
   // Category dropdown state
   const [categoryMenuVisible, setCategoryMenuVisible] = useState(false);
@@ -187,15 +188,19 @@ export default function AddTaskScreen() {
               <View style={styles.categorySelected}>
                 <IconButton
                   icon={categories.find(c => c.id === task.category)?.icon || 'folder-outline'}
-                  size={Platform.OS === 'web' ? 24 : 20}
+                  size={Platform.OS === 'web' ? 24 : (isPhoneSize ? 28 : 20)}
                   iconColor={theme.colors.primary}
                 />
-                <Text style={{ color: theme.colors.onSurface, flex: 1 }}>
+                <Text style={{ 
+                  color: theme.colors.onSurface, 
+                  flex: 1,
+                  fontSize: isPhoneSize ? 16 : undefined 
+                }}>
                   {categories.find(c => c.id === task.category)?.name || t('tasks.noCategory')}
                 </Text>
                 <IconButton 
                   icon={categoryMenuVisible ? "menu-up" : "menu-down"} 
-                  size={Platform.OS === 'web' ? 24 : 20} 
+                  size={Platform.OS === 'web' ? 24 : (isPhoneSize ? 28 : 20)} 
                   iconColor={theme.colors.primary} 
                 />
               </View>
@@ -212,7 +217,7 @@ export default function AddTaskScreen() {
             elevation={2}
           >
             <ScrollView 
-              style={{ maxHeight: Platform.OS === 'web' ? 200 : 150 }}
+              style={{ maxHeight: Platform.OS === 'web' ? 200 : (isPhoneSize ? 250 : 150) }}
               nestedScrollEnabled={true}
               keyboardShouldPersistTaps="handled"
             >
@@ -236,7 +241,7 @@ export default function AddTaskScreen() {
                   >
                     <IconButton
                       icon={category.icon}
-                      size={Platform.OS === 'web' ? 24 : 20}
+                      size={Platform.OS === 'web' ? 24 : (isPhoneSize ? 28 : 20)}
                       iconColor={task.category === category.id 
                         ? theme.colors.primary 
                         : theme.colors.onSurfaceVariant
@@ -281,9 +286,10 @@ export default function AddTaskScreen() {
                 style={[
                   styles.priorityItem,
                   task.priority === priority.value && { 
-                    backgroundColor: `${priority.color}20`,
+                    backgroundColor: `${priority.color}40`,
                     borderColor: priority.color,
-                  }
+                  },
+                  { backgroundColor: theme.dark ? '#333333' : 'rgba(0,0,0,0.05)' }
                 ]}
                 elevation={1}
               >
@@ -293,20 +299,30 @@ export default function AddTaskScreen() {
                     status={task.priority === priority.value ? 'checked' : 'unchecked'}
                     color={priority.color}
                     onPress={() => handleChange('priority', priority.value)}
-                    size={Platform.OS === 'web' ? 24 : 20}
+                    size={Platform.OS === 'web' ? 24 : (isPhoneSize ? 28 : 20)}
                   />
-                  <IconButton
-                    icon={priority.icon}
-                    size={Platform.OS === 'web' ? 16 : 14}
-                    iconColor={priority.color}
-                    onPress={() => handleChange('priority', priority.value)}
-                  />
-                  <Text 
-                    style={[styles.priorityLabel, { color: theme.colors.onSurface }]}
-                    onPress={() => handleChange('priority', priority.value)}
-                  >
-                    {priority.label}
-                  </Text>
+                  <View style={styles.priorityLabelContainer}>
+                    <IconButton
+                      icon={priority.icon}
+                      size={Platform.OS === 'web' ? 16 : (isPhoneSize ? 20 : 14)}
+                      iconColor={priority.color}
+                      onPress={() => handleChange('priority', priority.value)}
+                    />
+                    <Text 
+                      style={[
+                        styles.priorityLabel, 
+                        { 
+                          color: task.priority === priority.value 
+                            ? priority.color 
+                            : (theme.dark ? '#FFFFFF' : theme.colors.onSurface),
+                          fontWeight: task.priority === priority.value ? 'bold' : 'normal'
+                        }
+                      ]}
+                      onPress={() => handleChange('priority', priority.value)}
+                    >
+                      {priority.label}
+                    </Text>
+                  </View>
                 </View>
               </Surface>
             </TouchableWithoutFeedback>
@@ -339,7 +355,7 @@ export default function AddTaskScreen() {
           <Surface
             style={[
               styles.modalContent,
-              isLargeScreen ? styles.modalLarge : styles.modalSmall,
+              isLargeScreen ? styles.modalLarge : isPhoneSize ? styles.modalPhone : styles.modalSmall,
               { 
                 backgroundColor: theme.colors.surface,
                 paddingTop: Platform.OS === 'web' ? (insets.top + 16) : 8,
@@ -356,7 +372,7 @@ export default function AddTaskScreen() {
               </Text>
               <IconButton
                 icon="close"
-                size={24}
+                size={isPhoneSize ? 28 : 24}
                 onPress={closeModal}
                 iconColor={theme.colors.onSurfaceVariant}
               />
@@ -377,8 +393,8 @@ export default function AddTaskScreen() {
                   mode="outlined"
                   error={!!titleError}
                   style={styles.input}
-                  left={Platform.OS === 'web' ? <TextInput.Icon icon="format-title" /> : null}
-                  dense={Platform.OS !== 'web'}
+                  left={Platform.OS === 'web' ? <TextInput.Icon icon="format-title" /> : (isPhoneSize ? <TextInput.Icon icon="format-title" size={24} /> : null)}
+                  dense={Platform.OS !== 'web' && !isPhoneSize}
                 />
                 {titleError ? (
                   <Text style={[styles.errorText, { color: theme.colors.error }]}>
@@ -395,9 +411,9 @@ export default function AddTaskScreen() {
                   mode="outlined"
                   style={styles.input}
                   multiline
-                  numberOfLines={3}
-                  left={Platform.OS === 'web' ? <TextInput.Icon icon="text-box-outline" /> : null}
-                  dense={Platform.OS !== 'web'}
+                  numberOfLines={isPhoneSize ? 4 : 3}
+                  left={Platform.OS === 'web' ? <TextInput.Icon icon="text-box-outline" /> : (isPhoneSize ? <TextInput.Icon icon="text-box-outline" size={24} /> : null)}
+                  dense={Platform.OS !== 'web' && !isPhoneSize}
                 />
               </View>
 
@@ -424,28 +440,36 @@ export default function AddTaskScreen() {
                   <PlatformDatePicker
                     value={task.dueDate}
                     onChange={(date) => handleChange('dueDate', date)}
-                    containerStyle={styles.datePicker}
+                    containerStyle={[styles.datePicker, isPhoneSize && { 
+                      marginTop: 12,
+                      height: 60,
+                      justifyContent: 'center',
+                    }]}
                     minimumDate={new Date()}
                     label={null}
+                    textStyle={isPhoneSize ? { fontSize: 16 } : undefined}
+                    iconSize={isPhoneSize ? 28 : undefined}
                   />
                 )}
               </View>
             </ScrollView>
 
-            <View style={styles.modalFooter}>
+            <View style={styles.buttonContainer}>
               <Button
                 mode="outlined"
                 onPress={closeModal}
-                style={styles.footerButton}
+                style={styles.button}
+                labelStyle={isPhoneSize ? { fontSize: 16 } : undefined}
               >
                 {t('common.cancel')}
               </Button>
               <Button
                 mode="contained"
                 onPress={handleSubmit}
-                style={styles.footerButton}
+                style={styles.button}
                 disabled={loading}
                 loading={loading}
+                labelStyle={isPhoneSize ? { fontSize: 16 } : undefined}
               >
                 {t('common.save')}
               </Button>
@@ -489,6 +513,12 @@ const styles = StyleSheet.create({
     minHeight: 300,
     borderRadius: Platform.OS === 'web' ? 16 : 8,
   },
+  modalPhone: {
+    width: '100%', // 100% width for phone
+    height: '100%', // 100% height for phone
+    maxHeight: '100%',
+    borderRadius: 0, // No border radius for full-screen experience
+  },
   modalLarge: {
     width: '60%',
     maxWidth: 600,
@@ -515,26 +545,28 @@ const styles = StyleSheet.create({
   },
   formContainer: {
     paddingBottom: 20,
+    paddingHorizontal: Platform.OS !== 'web' && Dimensions.get('window').width < 480 ? 12 : 0, // Extra padding for phone
   },
   formField: {
-    marginBottom: Platform.OS === 'web' ? 16 : 12,
+    marginBottom: Platform.OS === 'web' ? 16 : (Dimensions.get('window').width < 480 ? 20 : 12),
   },
   input: {
     marginBottom: 4,
-    fontSize: Platform.OS === 'web' ? undefined : 14,
+    fontSize: Platform.OS === 'web' ? undefined : (Dimensions.get('window').width < 480 ? 16 : 14),
+    height: Platform.OS === 'web' ? undefined : (Dimensions.get('window').width < 480 ? 60 : undefined), // Taller inputs on phone
   },
   errorText: {
-    fontSize: 12,
+    fontSize: Dimensions.get('window').width < 480 ? 14 : 12,
     marginLeft: 8,
   },
   sectionTitle: {
-    fontSize: Platform.OS === 'web' ? 16 : 14,
+    fontSize: Platform.OS === 'web' ? 16 : (Dimensions.get('window').width < 480 ? 18 : 14),
     fontWeight: '500',
-    marginBottom: Platform.OS === 'web' ? 8 : 4,
+    marginBottom: Platform.OS === 'web' ? 8 : (Dimensions.get('window').width < 480 ? 12 : 4),
     marginLeft: 8,
   },
   prioritiesContainer: {
-    marginBottom: 16,
+    marginBottom: Dimensions.get('window').width < 480 ? 24 : 16,
   },
   prioritiesRow: {
     flexDirection: 'row',
@@ -548,29 +580,45 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: 'transparent',
     overflow: 'hidden',
+    minHeight: Dimensions.get('window').width < 480 ? 50 : 40,
+    minWidth: Dimensions.get('window').width < 480 ? 110 : 80,
   },
   priorityContent: {
     flexDirection: 'row',
     alignItems: 'center',
-    padding: Platform.OS === 'web' ? 8 : 4,
+    padding: Platform.OS === 'web' ? 8 : (Dimensions.get('window').width < 480 ? 8 : 4),
+    paddingHorizontal: 8,
+    justifyContent: 'flex-start',
+  },
+  priorityLabelContainer: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   priorityLabel: {
-    flex: 1,
-    fontSize: 14,
+    fontSize: Dimensions.get('window').width < 480 ? 16 : 14,
+    flexWrap: 'wrap',
+    whiteSpace: 'normal',
+    overflow: 'visible',
+    textAlign: 'center',
+    marginHorizontal: 2,
   },
   divider: {
-    marginVertical: Platform.OS === 'web' ? 16 : 8,
+    marginVertical: Platform.OS === 'web' ? 16 : (Dimensions.get('window').width < 480 ? 16 : 8),
+    height: Dimensions.get('window').width < 480 ? 2 : 1,
   },
   categoriesContainer: {
-    marginBottom: 16,
+    marginBottom: Dimensions.get('window').width < 480 ? 24 : 16,
   },
   categoryDropdown: {
     borderWidth: 1,
     borderRadius: 8,
     overflow: 'hidden',
+    minHeight: Dimensions.get('window').width < 480 ? 56 : undefined,
   },
   categoryDropdownContent: {
-    padding: Platform.OS === 'web' ? 8 : 4,
+    padding: Platform.OS === 'web' ? 8 : (Dimensions.get('window').width < 480 ? 8 : 4),
   },
   categorySelected: {
     flexDirection: 'row',
@@ -583,12 +631,13 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
     marginTop: 4,
     borderColor: 'rgba(0,0,0,0.1)',
+    maxHeight: Dimensions.get('window').width < 480 ? 250 : undefined,
   },
   categoryListItem: {
     flexDirection: 'row',
     alignItems: 'center',
     marginVertical: 2,
-    padding: 4,
+    padding: Dimensions.get('window').width < 480 ? 8 : 4,
     borderRadius: 8,
   },
   categoryItemSelected: {
@@ -598,6 +647,7 @@ const styles = StyleSheet.create({
   categoryLabel: {
     marginLeft: 4,
     marginRight: 8,
+    fontSize: Dimensions.get('window').width < 480 ? 16 : undefined,
   },
   datePicker: {
     marginTop: 8,
@@ -690,15 +740,16 @@ const styles = StyleSheet.create({
     marginLeft: 8,
     fontSize: 16,
   },
-  modalFooter: {
+  buttonContainer: {
     flexDirection: 'row',
     justifyContent: 'flex-end',
-    paddingTop: Platform.OS === 'web' ? 16 : 8,
-    borderTopWidth: 1,
-    borderTopColor: 'rgba(0,0,0,0.1)',
+    marginTop: 16,
+    gap: 8,
+    paddingHorizontal: Dimensions.get('window').width < 480 ? 12 : 0,
   },
-  footerButton: {
-    marginLeft: 8,
-    minWidth: Platform.OS === 'web' ? 100 : 80,
+  button: {
+    minWidth: Platform.OS === 'ios' || Platform.OS === 'android' ? (Dimensions.get('window').width < 480 ? 140 : 120) : 100,
+    paddingHorizontal: 16,
+    height: Dimensions.get('window').width < 480 ? 48 : undefined,
   },
 }); 

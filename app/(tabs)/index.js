@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { 
   View, 
   StyleSheet, 
@@ -41,12 +41,17 @@ import { format, isToday, isTomorrow, isPast, isFuture, compareAsc, startOfToday
 import { ru } from 'date-fns/locale';
 import PlatformDatePicker from '../components/PlatformDatePicker';
 import { router } from 'expo-router';
+import TabAppBar from '../components/TabAppBar';
+import PageBackground from '../../components/PageBackground';
+import TabBackground from '../components/TabBackground';
+import { useTheme as useCustomTheme } from '../context/ThemeContext';
+import ThemeAwareView from '../components/ThemeAwareView';
 
 export default function TasksScreen() {
   const { t } = useTranslation();
   const theme = useTheme();
+  const { isDarkMode, setDarkMode } = useCustomTheme();
   const systemColorScheme = useColorScheme();
-  const [darkMode, setDarkMode] = useState(systemColorScheme === 'dark');
   const [tasks, setTasks] = useState([]);
   const [filteredTasks, setFilteredTasks] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -112,25 +117,6 @@ export default function TasksScreen() {
       subscription.remove();
     };
   }, []);
-
-  // Load dark mode setting from AsyncStorage
-  useEffect(() => {
-    const loadThemePreference = async () => {
-      try {
-        const savedDarkMode = await AsyncStorage.getItem('darkMode');
-        if (savedDarkMode !== null) {
-          setDarkMode(JSON.parse(savedDarkMode));
-        } else {
-          setDarkMode(systemColorScheme === 'dark');
-        }
-      } catch (error) {
-        console.error('Failed to load theme preference:', error);
-        setDarkMode(systemColorScheme === 'dark');
-      }
-    };
-    
-    loadThemePreference();
-  }, [systemColorScheme]);
 
   // Load tasks from Firebase
   useEffect(() => {
@@ -660,26 +646,36 @@ export default function TasksScreen() {
     );
   };
 
-  // Сохранение настройки темы и обновление AsyncStorage
+  // Toggle dark mode
   const toggleDarkMode = async () => {
     try {
-      const newDarkMode = !darkMode;
+      const newDarkMode = !isDarkMode;
       setDarkMode(newDarkMode);
       await AsyncStorage.setItem('darkMode', JSON.stringify(newDarkMode));
     } catch (error) {
-      console.error('Failed to toggle dark mode:', error);
+      console.error('Error toggling dark mode:', error);
     }
   };
 
+  const [menuVisible, setMenuVisible] = useState(false);
+  
+  const handleOpenMenu = () => {
+    setMenuVisible(true);
+    console.log('Tasks menu opened');
+  };
+
+  // Create fallback colors in case theme.colors.tasksTab is undefined
+  const tasksTabColors = useMemo(() => theme.colors.tasksTab || {
+    primary: theme.colors.primary,
+    secondary: theme.colors.secondary
+  }, [theme.colors]);
+
   return (
-    <Provider>
-      <View style={[
-        styles.container, 
-        { backgroundColor: theme.colors.background }
-      ]}>
-        <Appbar.Header style={{ backgroundColor: theme.colors.primary }}>
-          <Appbar.Content title={t('tasks.title')} />
-        </Appbar.Header>
+    <ThemeAwareView tabName="tasks">
+      <TabAppBar title={t('tasks.title')} tabName="tasks" />
+      <View style={styles.container}>
+        <PageBackground pageName="tasks" />
+        <StatusBar style={isDarkMode ? 'light' : 'dark'} />
         
         <View style={styles.searchContainer}>
           <Searchbar
@@ -771,22 +767,26 @@ export default function TasksScreen() {
           style={[
             styles.fab,
             { 
-              backgroundColor: theme.colors.primary,
+              backgroundColor: '#3498db',
               zIndex: 1000 // Ensure high z-index for the FAB
             }
           ]}
           icon="plus"
           onPress={handleAddTask}
           label={t('tasks.addTask')}
+          color="#fff"
         />
       </View>
-    </Provider>
+    </ThemeAwareView>
   );
 }
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
+    paddingHorizontal: 0, // Removed padding
+    width: '100%',
+    maxWidth: '100%',
   },
   searchContainer: {
     flexDirection: 'row',
@@ -836,10 +836,10 @@ const styles = StyleSheet.create({
     marginBottom: 16,
   },
   taskList: {
-    paddingHorizontal: 8, // Reduced from 16 to allow more space for cards
+    paddingHorizontal: 16,
     paddingBottom: 120,
     width: '100%',
-    maxWidth: 1320, // Significantly increased from 1120
+    maxWidth: 1320,
   },
   taskCard: {
     marginBottom: 16,
@@ -859,19 +859,20 @@ const styles = StyleSheet.create({
     padding: 4,
   },
   taskTitle: {
-    fontSize: 18,
-    fontWeight: 'bold',
     flex: 1,
+    fontSize: 16,
     marginLeft: 8,
+    fontWeight: '500',
   },
   taskDescription: {
-    fontSize: 16,
-    marginBottom: 12,
-    paddingLeft: 42,
+    fontSize: 14,
+    marginLeft: 32,
+    marginTop: 4,
+    opacity: 0.9, // Slightly higher opacity for better visibility
   },
   completedText: {
     textDecorationLine: 'line-through',
-    opacity: 0.7,
+    opacity: 0.6, // Improved opacity for better visibility
   },
   taskFooter: {
     flexDirection: 'row',
