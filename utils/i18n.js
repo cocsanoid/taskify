@@ -196,6 +196,7 @@ const ruTranslations = {
     search: 'Поиск',
     searchPlaceholder: 'Поиск задач...',
     themeToggle: 'Переключить тему',
+    noUpcomingTasks: 'Нет предстоящих задач',
   },
   notes: {
     title: 'Мои заметки',
