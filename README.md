@@ -108,3 +108,5 @@ This project is licensed under the MIT License.
 - [Firebase](https://firebase.google.com)
 - [React Native Paper](https://reactnativepaper.com)
 - [React Native Calendars](https://github.com/wix/react-native-calendars)
+
+thx.
